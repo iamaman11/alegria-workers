@@ -616,7 +616,7 @@ app.post('/api/cache/invalidate', async (c) => {
     // Clear via Cloudflare API by tags (Workers API) and URLs (Pages)
     const cacheTags: string[] = [];
     const pagesUrls: string[] = [];
-    const frontendDomain = c.env.FRONTEND_URL || 'https://ef1f388d.alegria-8gj.pages.dev';
+    const frontendDomain = c.env.FRONTEND_URL || 'https://poshta.cloud';
 
     if (collection === 'posts') {
       cacheTags.push(`post:${slug}`);
@@ -670,7 +670,7 @@ app.post('/api/cache/invalidate', async (c) => {
       (!('_status' in bodyData) || bodyData._status === 'published');
 
     if (shouldPreWarm) {
-      const frontendUrl = c.env.FRONTEND_URL || 'https://701cfcd0.alegria-8gj.pages.dev';
+      const frontendUrl = c.env.FRONTEND_URL || 'https://poshta.cloud';  // FIXED: Was old Pages URL
       const pathGenerator = COLLECTIONS_WITH_PAGES[collection as keyof typeof COLLECTIONS_WITH_PAGES];
       const pageUrl = `${frontendUrl}${pathGenerator(slug)}`;
 

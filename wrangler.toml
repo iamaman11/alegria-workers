@@ -33,10 +33,10 @@ local_protocol = "http"
 [vars]
 ENVIRONMENT = "production"
 ALLOWED_ORIGINS = "https://*.pages.dev,https://*.vercel.app,https://poshta.cloud,https://www.poshta.cloud,http://localhost:3000"
-CMS_URL = "https://alegria-by.vercel.app"
+CMS_URL = "https://alegria-by-cms.vercel.app"
 FRONTEND_URL = "https://poshta.cloud"
 WORKERS_DOMAIN = "alegria-api.majakojh.workers.dev"
-CLOUDFLARE_ZONE_ID = "b6085b3930918455cb5b64aad4e3f9bf"
+CLOUDFLARE_ZONE_ID = "1853e9c16cb887cc9f037931443b4b36"
 VERCEL_BYPASS_TOKEN = "eTDpdWLCGaI7kjzZTB4L6yE7KztvOXd3"
 WEBHOOK_SECRET = "zLcKtwlMEJOHZmVXKJjNZk2GXZ2vrsM-TnoRRFkyF2w"
 
