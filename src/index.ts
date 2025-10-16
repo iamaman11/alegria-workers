@@ -104,7 +104,7 @@ async function fetchFromCMS(
         'Content-Type': 'application/json',
         'X-Cache': 'KV-HIT',
         'X-Cache-Duration': `${duration}ms`,
-        'Cloudflare-CDN-Cache-Control': `public, max-age=${cdnTTL}`,
+        'Cache-Control': `public, max-age=${cdnTTL}, s-maxage=${cdnTTL}`,
         'Vary': 'Accept-Encoding',
       };
 
@@ -160,7 +160,7 @@ async function fetchFromCMS(
       'Content-Type': 'application/json',
       'X-Cache': 'ORIGIN-MISS',
       'X-Cache-Duration': `${duration}ms`,
-      'Cloudflare-CDN-Cache-Control': `public, max-age=${cdnTTL}`,
+      'Cache-Control': `public, max-age=${cdnTTL}, s-maxage=${cdnTTL}`,
       'Vary': 'Accept-Encoding',
     };
 
