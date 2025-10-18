@@ -4,8 +4,10 @@ compatibility_date = "2024-10-09"
 account_id = "6045b0c922c5f02ca8efe49010a2e687"
 
 # Routes for custom domain
+# API on subdomain: api.poshta.cloud instead of poshta.cloud/api/*
+# This avoids conflicts with Pages routing
 routes = [
-  { pattern = "poshta.cloud/api/*", zone_name = "poshta.cloud" },
+  { pattern = "api.poshta.cloud/*", zone_name = "poshta.cloud" },
 ]
 
 # Workers.dev subdomain (остается включенным для резервного доступа)
