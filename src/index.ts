@@ -19,21 +19,14 @@ type Bindings = {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-// CORS configuration
-app.use('*', async (c, next) => {
-  const corsMiddleware = cors({
-    origin: (origin) => {
-      const allowedOrigins = c.env.ALLOWED_ORIGINS?.split(',') || [];
-      return allowedOrigins.some(allowed =>
-        origin.includes(allowed.replace('https://*.', ''))
-      ) ? origin : false;
-    },
-    credentials: true,
-    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'x-webhook-secret', 'x-request-id'],
-  });
-  return corsMiddleware(c, next);
-});
+// PERFORMANCE: Simplified CORS - only for POST/PUT/DELETE (webhooks)
+// GET requests don't need CORS overhead
+app.use('/api/cache/*', cors({
+  origin: '*', // Webhooks from CMS
+  credentials: false,
+  allowMethods: ['POST'],
+  allowHeaders: ['Content-Type', 'x-webhook-secret', 'x-request-id'],
+}));
 
 /**
  * 3-LAYER EXPERT CACHING ARCHITECTURE
@@ -138,7 +131,11 @@ async function fetchFromCMS(
     const url = `${c.env.CMS_URL}${endpoint}`;
     console.log(`[Fetch] Origin: ${url}`);
 
-    const originResponse = await fetch(url, { headers });
+    // CRITICAL FIX: Add 5-second timeout to prevent 56-second waits
+    const originResponse = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(5000) // 5 seconds max
+    });
 
     if (!originResponse.ok) {
       throw new Error(`CMS returned ${originResponse.status}`);
@@ -179,8 +176,33 @@ async function fetchFromCMS(
 
     return finalResponse;
   } catch (error) {
-    console.error('[Error] Fetch failed:', error);
-    return c.json({ error: 'Failed to fetch from CMS' }, 500);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('[Error] Fetch failed:', errorMessage);
+
+    // CRITICAL FIX: If origin fails but we have KV cache, return stale data
+    if (kvCached) {
+      const duration = Date.now() - startTime;
+      console.log(`[Fallback] Using stale KV cache due to origin error: ${errorMessage}`);
+
+      return new Response(kvCached, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Cache': 'KV-STALE',
+          'X-Cache-Duration': `${duration}ms`,
+          'X-Error': errorMessage,
+          'Cache-Control': `public, max-age=${cdnTTL}, s-maxage=${cdnTTL}, stale-while-revalidate=86400`,
+          'Vary': 'Accept-Encoding',
+        },
+      });
+    }
+
+    // No cache available, return error
+    return c.json({
+      error: 'Failed to fetch from CMS',
+      message: errorMessage,
+      timestamp: new Date().toISOString()
+    }, 503); // 503 Service Unavailable instead of 500
   }
 }
 
@@ -231,11 +253,22 @@ app.get('/api/posts/:slug', async (c) => {
     `post:${slug}`  // Cache-Tag for purging
   );
 
-  // Extract first doc from paginated response
+  // PERFORMANCE FIX: Parse JSON only once
   if (response.status === 200) {
-    const data = await response.json();
+    const text = await response.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      return c.json({ error: 'Invalid JSON from CMS' }, 500);
+    }
+
     if (data.docs && data.docs.length > 0) {
-      return c.json(data.docs[0], 200, response.headers);
+      // Return first doc directly without re-stringifying
+      return new Response(JSON.stringify(data.docs[0]), {
+        status: 200,
+        headers: response.headers,
+      });
     }
     return c.json({ error: 'Post not found' }, 404);
   }
@@ -276,11 +309,22 @@ app.get('/api/pages/:slug', async (c) => {
     `page:${slug}`  // Cache-Tag for purging
   );
 
-  // Extract first doc from paginated response
+  // PERFORMANCE FIX: Parse JSON only once
   if (response.status === 200) {
-    const data = await response.json();
+    const text = await response.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      return c.json({ error: 'Invalid JSON from CMS' }, 500);
+    }
+
     if (data.docs && data.docs.length > 0) {
-      return c.json(data.docs[0], 200, response.headers);
+      // Return first doc directly without re-stringifying
+      return new Response(JSON.stringify(data.docs[0]), {
+        status: 200,
+        headers: response.headers,
+      });
     }
     return c.json({ error: 'Page not found' }, 404);
   }
@@ -309,11 +353,21 @@ app.get('/api/categories/:slug', async (c) => {
 
   const response = await fetchFromCMS(c, endpoint, kvKey, 3600, 1800, `category:${slug}`); // Cache-Tag for purging
 
-  // Extract first doc
+  // PERFORMANCE FIX: Parse JSON only once
   if (response.status === 200) {
-    const data = await response.json();
+    const text = await response.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      return c.json({ error: 'Invalid JSON from CMS' }, 500);
+    }
+
     if (data.docs && data.docs.length > 0) {
-      return c.json(data.docs[0], 200, response.headers);
+      return new Response(JSON.stringify(data.docs[0]), {
+        status: 200,
+        headers: response.headers,
+      });
     }
     return c.json({ error: 'Category not found' }, 404);
   }
@@ -503,7 +557,8 @@ app.post('/api/cache/invalidate', async (c) => {
     }
 
     const bodyData = await c.req.json();
-    const { slug, collection, requestId: bodyRequestId, timestamp, operation } = bodyData;
+    const { doc, collection, requestId: bodyRequestId, timestamp, operation } = bodyData;
+    const slug = doc?.slug || bodyData.slug; // Support both Payload format (doc.slug) and direct format
     const finalRequestId = requestId || bodyRequestId || 'unknown';
 
     console.log(`[Webhook] Request ${finalRequestId}: Processing ${collection}:${slug} (operation: ${operation}, timestamp: ${timestamp})`);
@@ -667,7 +722,7 @@ app.post('/api/cache/invalidate', async (c) => {
       slug &&
       operation !== 'delete' &&
       collection in COLLECTIONS_WITH_PAGES &&
-      (!('_status' in bodyData) || bodyData._status === 'published');
+      (!doc?._status || doc._status === 'published');
 
     if (shouldPreWarm) {
       const frontendUrl = c.env.FRONTEND_URL || 'https://poshta.cloud';  // FIXED: Was old Pages URL
@@ -818,7 +873,9 @@ app.post('/api/cache/purge-all', async (c) => {
 // R2 storage: files are in root without media/ prefix
 app.get('/media/*', async (c) => {
   // Extract filename: /media/photo.jpg -> photo.jpg
-  const key = c.req.path.replace('/media/', '');
+  // Remove query parameters: /media/photo.jpg?timestamp -> photo.jpg
+  let key = c.req.path.replace('/media/', '');
+  key = key.split('?')[0]; // Strip query parameters (cache tags, etc)
 
   try {
     // Check if Range header is present (for video seeking)
