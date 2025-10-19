@@ -19,6 +19,45 @@ type Bindings = {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
+// Global webhook metrics tracking for monitoring
+interface WebhookMetrics {
+  totalRequests: number;
+  successCount: number;
+  failureCount: number;
+  lastSuccess: string | null;
+  lastFailure: string | null;
+  lastFailureError: string | null;
+  consecutiveFailures: number;
+  failureHistory: Array<{ timestamp: string; error: string }>;
+}
+
+const webhookMetrics: WebhookMetrics = {
+  totalRequests: 0,
+  successCount: 0,
+  failureCount: 0,
+  lastSuccess: null,
+  lastFailure: null,
+  lastFailureError: null,
+  consecutiveFailures: 0,
+  failureHistory: []
+};
+
+// Route normalization middleware for custom domain routing
+// When accessed via poshta.cloud/api/*, Cloudflare strips /api prefix
+// This middleware ensures all routes work consistently
+app.use('*', async (c, next) => {
+  const path = c.req.path;
+
+  // If path doesn't start with /api, /media, or /health, prepend /api
+  // This handles requests from poshta.cloud/api/* which lose /api prefix
+  if (!path.startsWith('/api') && !path.startsWith('/media') && path !== '/health') {
+    // Clone request with modified path
+    c.req.path = `/api${path}`;
+  }
+
+  await next();
+});
+
 // PERFORMANCE: Simplified CORS - only for POST/PUT/DELETE (webhooks)
 // GET requests don't need CORS overhead
 app.use('/api/cache/*', cors({
@@ -763,7 +802,32 @@ app.post('/api/cache/invalidate', async (c) => {
     }
 
     const duration = Date.now() - startTime;
-    console.log(`[Webhook] Request ${finalRequestId}: SUCCESS - Cleared ${deletedKVKeys.length} KV keys, ${cdnCleared} CDN entries, CF API: ${cfPurged} (${cacheTags.length} tags, ${pagesUrls.length} URLs) in ${duration}ms`);
+
+    // Update webhook metrics on success
+    webhookMetrics.totalRequests++;
+    webhookMetrics.successCount++;
+    webhookMetrics.lastSuccess = new Date().toISOString();
+    webhookMetrics.consecutiveFailures = 0;
+
+    // Enhanced success logging with structured data
+    const successDetails = {
+      requestId: finalRequestId,
+      collection,
+      slug,
+      operation,
+      timestamp: new Date().toISOString(),
+      duration,
+      cacheMetrics: {
+        kvKeysDeleted: deletedKVKeys.length,
+        cdnUrlsCleared: cdnCleared,
+        totalCdnUrls: cdnUrls.length,
+        cloudflarePurged: cfPurged,
+        cfTags: cacheTags.length,
+        cfUrls: pagesUrls.length
+      }
+    };
+
+    console.log(`[Webhook] SUCCESS - Request ${finalRequestId} completed in ${duration}ms:`, JSON.stringify(successDetails));
 
     return c.json({
       success: true,
@@ -771,18 +835,105 @@ app.post('/api/cache/invalidate', async (c) => {
       requestId: finalRequestId,
       slug,
       collection,
-      deletedKVKeys,
-      cdnUrlsCleared: cdnCleared,
-      totalCdnUrls: cdnUrls.length,
-      cloudflarePurged: cfPurged,
-      cacheTags,
-      pagesUrls,
+      operation,
+      timestamp: new Date().toISOString(),
+      metrics: successDetails.cacheMetrics,
       duration
     });
   } catch (error) {
     const duration = Date.now() - startTime;
-    console.error(`[Webhook] ERROR after ${duration}ms:`, error);
-    return c.json({ error: 'Failed to invalidate cache' }, 500);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // Update webhook metrics on failure
+    webhookMetrics.totalRequests++;
+    webhookMetrics.failureCount++;
+    webhookMetrics.consecutiveFailures++;
+    webhookMetrics.lastFailure = new Date().toISOString();
+    webhookMetrics.lastFailureError = errorMessage;
+
+    // Keep failure history (last 10 failures)
+    webhookMetrics.failureHistory.push({
+      timestamp: new Date().toISOString(),
+      error: errorMessage
+    });
+    if (webhookMetrics.failureHistory.length > 10) {
+      webhookMetrics.failureHistory.shift();
+    }
+
+    // Enhanced error logging with structured data
+    const errorDetails = {
+      requestId: finalRequestId,
+      collection,
+      slug,
+      operation,
+      duration,
+      timestamp: new Date().toISOString(),
+      error: errorMessage,
+      errorType: error instanceof Error ? error.name : typeof error,
+      consecutiveFailures: webhookMetrics.consecutiveFailures
+    };
+
+    console.error(`[Webhook] FAILURE - Request ${finalRequestId} failed after ${duration}ms (${webhookMetrics.consecutiveFailures} consecutive failures):`, errorDetails);
+
+    return c.json({
+      error: 'Failed to invalidate cache',
+      requestId: finalRequestId,
+      details: errorDetails
+    }, 500);
+  }
+});
+
+// Webhook health check endpoint (for monitoring)
+app.get('/api/webhook-health', async (c) => {
+  try {
+    const timestamp = new Date().toISOString();
+
+    // Calculate success rate
+    const successRate = webhookMetrics.totalRequests > 0
+      ? Math.round((webhookMetrics.successCount / webhookMetrics.totalRequests) * 100)
+      : 0;
+
+    // Determine health status based on metrics
+    let healthStatus = 'healthy';
+    if (webhookMetrics.consecutiveFailures >= 5) {
+      healthStatus = 'degraded';
+    }
+    if (webhookMetrics.consecutiveFailures >= 10) {
+      healthStatus = 'critical';
+    }
+
+    // Return comprehensive health status with metrics
+    const healthResponse = {
+      status: healthStatus,
+      service: 'webhook-invalidation',
+      timestamp,
+      environment: c.env.ENVIRONMENT || 'production',
+      metrics: {
+        totalRequests: webhookMetrics.totalRequests,
+        successCount: webhookMetrics.successCount,
+        failureCount: webhookMetrics.failureCount,
+        successRate: `${successRate}%`,
+        consecutiveFailures: webhookMetrics.consecutiveFailures,
+        lastSuccess: webhookMetrics.lastSuccess,
+        lastFailure: webhookMetrics.lastFailure,
+        lastFailureError: webhookMetrics.lastFailureError,
+        recentFailures: webhookMetrics.failureHistory.slice(-5) // Last 5 failures
+      }
+    };
+
+    console.log(`[Health] Webhook service health check: ${JSON.stringify(healthResponse)}`);
+
+    // Return appropriate status code based on health
+    const statusCode = healthStatus === 'healthy' ? 200 : (healthStatus === 'degraded' ? 503 : 500);
+
+    return c.json(healthResponse, statusCode);
+  } catch (error) {
+    console.error('[Health] Health check failed:', error);
+    return c.json({
+      status: 'error',
+      service: 'webhook-invalidation',
+      error: error instanceof Error ? error.message : String(error)
+    }, 503);
   }
 });
 
