@@ -271,7 +271,7 @@ app.get('/api/posts', async (c) => {
   }
 
   const kvKey = `posts:page=${page}:limit=${limit}:depth=${depth}:category=${category || 'all'}`;
-  return fetchFromCMS(c, endpoint, kvKey, 600, 300); // KV: 10min, CDN: 5min
+  return fetchFromCMS(c, endpoint, kvKey, 600, 300, 'posts:list');  // Cache-Tag for list purging
 });
 
 // Get single post by slug
@@ -327,7 +327,7 @@ app.get('/api/pages', async (c) => {
   const endpoint = `/api/pages?limit=${limit}&depth=${depth}`;
   const kvKey = `pages:limit=${limit}:depth=${depth}`;
 
-  return fetchFromCMS(c, endpoint, kvKey, 1200, 600); // KV: 20min, CDN: 10min (rarely changes)
+  return fetchFromCMS(c, endpoint, kvKey, 1200, 600, 'pages:list');  // Cache-Tag for list purging
 });
 
 // Get single page by slug
