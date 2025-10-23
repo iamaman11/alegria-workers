@@ -750,11 +750,11 @@ app.post('/api/cache/invalidate', async (c) => {
     const cfPurged = await purgeCloudflare(c, cacheTags, pagesUrls);
 
     // ============================================
-    // LAYER 2-3: Purge R2 & D1 Cache via Pages Function
+    // LAYER 2-3: Purge R2 & D1 Cache via Next.js API Route
     // ============================================
-    // Pages Function (functions/api/cache-purge.ts) has direct access to R2/D1 bindings
-    // This is more efficient than trying to access from Next.js API route
-    // Advantages: native access to env bindings, no Workers overhead, lower cost
+    // Frontend /api/cache-purge endpoint handles R2/D1 deletion
+    // On Cloudflare Pages production: compiled as dynamic route with binding access
+    // On local dev: Node.js route with mock R2/D1 operations
     let r2D1Purged = false;
 
     if (collection === 'pages' || collection === 'posts') {
