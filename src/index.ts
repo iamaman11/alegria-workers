@@ -750,54 +750,62 @@ app.post('/api/cache/invalidate', async (c) => {
     const cfPurged = await purgeCloudflare(c, cacheTags, pagesUrls);
 
     // ============================================
-    // LAYER 2-3: Purge R2 & D1 Cache via Next.js API Route
+    // ATOMIC PURGE: Pages handles CDN + R2 + D1 together
     // ============================================
-    // Frontend /api/cache-purge endpoint handles R2/D1 deletion
-    // On Cloudflare Pages production: compiled as dynamic route with binding access
-    // On local dev: Node.js route with mock R2/D1 operations
-    let r2D1Purged = false;
+    // Frontend /api/cache-purge/atomic endpoint does:
+    // 1. DELETE D1 mappings
+    // 2. DELETE R2 cache files (parallel with Cloudflare API)
+    // 3. Cloudflare API: purge CDN by tags
+    // 4. Safe pre-warm only after ALL cleared
+    let atomicPurgeResult: any = null;
 
     if (collection === 'pages' || collection === 'posts') {
       try {
         const frontendUrl = c.env.FRONTEND_URL || 'https://poshta.cloud';
-        const webhookSecret = c.env.WEBHOOK_SECRET;
+        const cfToken = c.env.CLOUDFLARE_API_TOKEN;
+        const cfZoneId = c.env.CLOUDFLARE_ZONE_ID;
 
-        if (!webhookSecret) {
-          console.warn(`[cache-purge] WEBHOOK_SECRET not configured, skipping R2/D1 purge for ${collection}/${slug}`);
+        if (!cfToken || !cfZoneId) {
+          console.warn(`[atomic-purge] Request ${finalRequestId}: Missing API credentials, skipping atomic purge`);
         } else {
-          const purgeKey = collection === 'pages'
-            ? `page:${slug}:depth=2:draft=false`
-            : `post:${slug}:depth=2:draft=false`;
+          const atomicTags = [collection === 'pages' ? `page:${slug}` : `post:${slug}`];
 
-          const purgeBody = {
-            key: purgeKey,
-            tags: [collection === 'pages' ? `page-${slug}` : `post-${slug}`],
-            paths: pagesUrls
+          const atomicBody = {
+            tags: atomicTags,
+            cloudflare_api_token: cfToken,
+            cloudflare_zone_id: cfZoneId,
           };
 
-          const purgeResponse = await fetch(`${frontendUrl}/api/cache-purge`, {
+          console.log(`[atomic-purge] Request ${finalRequestId}: Starting atomic purge for ${collection}/${slug}`);
+
+          const atomicResponse = await fetch(`${frontendUrl}/api/cache-purge/atomic`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'x-webhook-secret': webhookSecret,
               'X-Request-Id': finalRequestId,
             },
-            body: JSON.stringify(purgeBody),
-            signal: AbortSignal.timeout(10000)
+            body: JSON.stringify(atomicBody),
+            signal: AbortSignal.timeout(15000)
           });
 
-          if (purgeResponse.ok) {
-            const purgeResult = await purgeResponse.json() as any;
-            r2D1Purged = purgeResult.success || purgeResult.results?.r2_deleted;
-            console.log(`[cache-purge] Request ${finalRequestId}: SUCCESS - R2/D1 purged for ${collection}/${slug}`, purgeResult);
+          if (atomicResponse.ok) {
+            atomicPurgeResult = await atomicResponse.json() as any;
+            console.log(
+              `[atomic-purge] Request ${finalRequestId}: SUCCESS - R2: ${atomicPurgeResult.deleted_r2}, ` +
+              `D1: ${atomicPurgeResult.deleted_d1}, CF: ${atomicPurgeResult.cloudflare_purged}, ` +
+              `duration: ${atomicPurgeResult.duration}ms`,
+              atomicPurgeResult
+            );
           } else {
-            const errorText = await purgeResponse.text();
-            console.warn(`[cache-purge] Request ${finalRequestId}: Failed with status ${purgeResponse.status} - ${errorText}`);
+            const errorText = await atomicResponse.text();
+            console.warn(
+              `[atomic-purge] Request ${finalRequestId}: Failed with status ${atomicResponse.status} - ${errorText}`
+            );
           }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[cache-purge] Request ${finalRequestId}: Error purging R2/D1 for ${collection}/${slug}: ${msg}`);
+        console.error(`[atomic-purge] Request ${finalRequestId}: Error in atomic purge for ${collection}/${slug}: ${msg}`);
       }
     }
 
