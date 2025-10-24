@@ -782,20 +782,19 @@ app.post('/api/cache/invalidate', async (c) => {
           signal: AbortSignal.timeout(15000)
         });
 
-          if (atomicResponse.ok) {
-            atomicPurgeResult = await atomicResponse.json() as any;
-            console.log(
-              `[atomic-purge] Request ${finalRequestId}: SUCCESS - R2: ${atomicPurgeResult.deleted_r2}, ` +
-              `D1: ${atomicPurgeResult.deleted_d1}, CF: ${atomicPurgeResult.cloudflare_purged}, ` +
-              `duration: ${atomicPurgeResult.duration}ms`,
-              atomicPurgeResult
-            );
-          } else {
-            const errorText = await atomicResponse.text();
-            console.warn(
-              `[atomic-purge] Request ${finalRequestId}: Failed with status ${atomicResponse.status} - ${errorText}`
-            );
-          }
+        if (atomicResponse.ok) {
+          atomicPurgeResult = await atomicResponse.json() as any;
+          console.log(
+            `[atomic-purge] Request ${finalRequestId}: SUCCESS - R2: ${atomicPurgeResult.deleted_r2}, ` +
+            `D1: ${atomicPurgeResult.deleted_d1}, CF: ${atomicPurgeResult.cloudflare_purged}, ` +
+            `duration: ${atomicPurgeResult.duration}ms`,
+            atomicPurgeResult
+          );
+        } else {
+          const errorText = await atomicResponse.text();
+          console.warn(
+            `[atomic-purge] Request ${finalRequestId}: Failed with status ${atomicResponse.status} - ${errorText}`
+          );
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
