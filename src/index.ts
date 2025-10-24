@@ -758,6 +758,7 @@ app.post('/api/cache/invalidate', async (c) => {
     // 3. Cloudflare API: purge CDN by tags
     // 4. Safe pre-warm only after ALL cleared
     let atomicPurgeResult: any = null;
+    let r2D1Purged = false;
 
     if (collection === 'pages' || collection === 'posts') {
       try {
@@ -784,6 +785,7 @@ app.post('/api/cache/invalidate', async (c) => {
 
         if (atomicResponse.ok) {
           atomicPurgeResult = await atomicResponse.json() as any;
+          r2D1Purged = true;
           console.log(
             `[atomic-purge] Request ${finalRequestId}: SUCCESS - R2: ${atomicPurgeResult.deleted_r2}, ` +
             `D1: ${atomicPurgeResult.deleted_d1}, CF: ${atomicPurgeResult.cloudflare_purged}, ` +
