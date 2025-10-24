@@ -762,31 +762,25 @@ app.post('/api/cache/invalidate', async (c) => {
     if (collection === 'pages' || collection === 'posts') {
       try {
         const frontendUrl = c.env.FRONTEND_URL || 'https://poshta.cloud';
-        const cfToken = c.env.CLOUDFLARE_API_TOKEN;
-        const cfZoneId = c.env.CLOUDFLARE_ZONE_ID;
 
-        if (!cfToken || !cfZoneId) {
-          console.warn(`[atomic-purge] Request ${finalRequestId}: Missing API credentials, skipping atomic purge`);
-        } else {
-          const atomicTags = [collection === 'pages' ? `page:${slug}` : `post:${slug}`];
+        const atomicTags = [collection === 'pages' ? `page:${slug}` : `post:${slug}`];
 
-          const atomicBody = {
-            tags: atomicTags,
-            cloudflare_api_token: cfToken,
-            cloudflare_zone_id: cfZoneId,
-          };
+        const atomicBody = {
+          tags: atomicTags,
+          // NOTE: DO NOT pass credentials - Pages reads from environment
+        };
 
-          console.log(`[atomic-purge] Request ${finalRequestId}: Starting atomic purge for ${collection}/${slug}`);
+        console.log(`[atomic-purge] Request ${finalRequestId}: Starting atomic purge for ${collection}/${slug}`);
 
-          const atomicResponse = await fetch(`${frontendUrl}/api/cache-purge/atomic`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Request-Id': finalRequestId,
-            },
-            body: JSON.stringify(atomicBody),
-            signal: AbortSignal.timeout(15000)
-          });
+        const atomicResponse = await fetch(`${frontendUrl}/api/cache-purge/atomic`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Request-Id': finalRequestId,
+          },
+          body: JSON.stringify(atomicBody),
+          signal: AbortSignal.timeout(15000)
+        });
 
           if (atomicResponse.ok) {
             atomicPurgeResult = await atomicResponse.json() as any;
