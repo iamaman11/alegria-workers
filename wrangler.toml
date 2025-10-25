@@ -13,11 +13,15 @@ routes = [
 # Workers.dev subdomain (остается включенным для резервного доступа)
 workers_dev = true
 
-[[d1_databases]]
-binding = "DB"
-database_name = "alegria-cache"
-database_id = "3944ed10-6044-4bee-8ed6-e016585ce124"
+# D1 REMOVED: Workers does NOT use D1 for cache (uses KV instead)
+# D1 (NEXT_TAG_CACHE_D1) is used only by Frontend for ISR tag cache
+# This aligns with original Next.js + Cloudflare Pages architecture
 
+# ============================================
+# R2 BINDINGS: CMS Media Storage
+# ============================================
+# Workers: CMS media access only (alegria-media)
+# Pages: ISR incremental cache (nextjs-incremental-cache) - SEPARATE bucket
 [[r2_buckets]]
 binding = "MEDIA_BUCKET"
 bucket_name = "alegria-media"
